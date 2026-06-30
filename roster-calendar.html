@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roster Calendar Generator</title>
+<style>
+  :root{--blue:#1f77b4;--off:#58e84e;--al:#d8ffb4;--flight:#cfe8ff;--border:#d7dce2;--text:#1f2937;--muted:#6b7280;--head:#0f4c81;}
+  body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f4f6f8;color:var(--text)}
+  header{background:var(--head);color:white;padding:18px 24px} header h1{margin:0;font-size:22px} header p{margin:6px 0 0;color:#dbeafe}
+  main{max-width:1200px;margin:20px auto;padding:0 16px}.panel{background:white;border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 2px 8px #00000012}
+  textarea{width:100%;min-height:190px;font-family:Consolas,monospace;font-size:13px;border:1px solid var(--border);border-radius:8px;padding:10px;box-sizing:border-box}
+  button,select{font-size:15px;border-radius:8px;border:1px solid var(--border);padding:10px 12px} button{background:var(--head);color:white;border:0;cursor:pointer;margin-right:8px} button.secondary{background:#4b5563}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:13px}.key{display:flex;gap:5px;align-items:center}.swatch{width:20px;height:13px;border:1px solid #aaa;border-radius:3px}.off{background:var(--off)}.al{background:var(--al)}.flight{background:var(--flight)}.blank{background:#f8fafc}
+  .cal-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.cal-title h2{margin:0;font-size:24px}.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:0;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:white}.dow{background:#eef2f7;font-weight:bold;text-align:center;padding:9px;border-right:1px solid var(--border)}.dow:last-child{border-right:0}
+  .day{min-height:105px;border-top:1px solid var(--border);border-right:1px solid var(--border);padding:6px;box-sizing:border-box;background:#fff;position:relative}.day:nth-child(7n){border-right:0}.date{font-size:12px;color:var(--muted);font-weight:bold}.other .date{color:#c0c4cc}.pill{margin-top:5px;padding:4px 5px;border-radius:5px;font-size:12px;line-height:1.25;white-space:pre-wrap}.pill.off{background:var(--off)}.pill.al{background:var(--al)}.pill.flight{background:var(--flight)}.pill.note{background:#fff4cc}.small{font-size:11px;color:#374151}.print-note{font-size:12px;color:var(--muted)}
+  @media print{body{background:white} header,.input-panel,.controls,.print-note{display:none}.panel{box-shadow:none;border:0;margin:0}.day{min-height:95px}.calendar{page-break-inside:avoid}}
+</style>
+</head>
+<body>
+<header><h1>Roster Calendar Generator</h1><p>Paste raw roster text, then generate a clean month calendar.</p></header>
+<main>
+<section class="panel input-panel">
+  <label for="raw"><strong>Raw roster text</strong></label>
+  <textarea id="raw" placeholder="Paste your roster code here..."></textarea>
+  <div class="controls">
+    <button onclick="generate()">Generate Calendar</button>
+    <button class="secondary" onclick="window.print()">Print / Save as PDF</button>
+    <label>Month: <select id="monthSelect"></select></label>
+  </div>
+  <div class="legend">
+    <span class="key"><span class="swatch off"></span>OFF</span>
+    <span class="key"><span class="swatch al"></span>Annual Leave</span>
+    <span class="key"><span class="swatch flight"></span>Flight / Duty</span>
+    <span class="key"><span class="swatch blank"></span>Blank</span>
+  </div>
+</section>
+<section class="panel">
+  <div class="cal-title"><h2 id="title">Calendar</h2><span class="print-note">Tip: use Print / Save as PDF for sharing.</span></div>
+  <div id="calendar" class="calendar"></div>
+</section>
+</main>
+<script>
+const monthNames=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const dayNames=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+let parsedDays = {};
+function add(dayMap, date, item){ if(!dayMap[date]) dayMap[date]=[]; dayMap[date].push(item); }
+function cleanText(t){return t.replace(/\s+/g,' ').trim();}
+function parseRoster(raw){
+  const text=cleanText(raw); const days={};
+  // Dated OFF blocks
+  [...text.matchAll(/OFF OFF OFF DUTY OFF(?: DUTY)? LHR\s+(\d{4}-\d{2}-\d{2})T/g)].forEach(m=>add(days,m[1],{type:'off',text:'OFF'}));
+  [...text.matchAll(/(\d{4}-\d{2}-\d{2})T[^ ]+\s+(?:\d{4}-\d{2}-\d{2})T[^ ]+\s+OFF OFF OFF DUTY OFF(?: DUTY)? LHR/g)].forEach(m=>add(days,m[1],{type:'off',text:'OFF'}));
+  // Annual leave
+  [...text.matchAll(/AL LVE LEAVE ANNUAL LEAVE LHR\s+(\d{4}-\d{2}-\d{2})T/g)].forEach(m=>add(days,m[1],{type:'al',text:'AL\nAnnual Leave'}));
+  // If AL appears before an OFF block with no timestamp immediately after, attach to next date found nearby
+  [...text.matchAll(/AL LVE LEAVE ANNUAL LEAVE LHR\s+(\d{4}-\d{2}-\d{2})T/g)].forEach(m=>add(days,m[1],{type:'al',text:'AL\nAnnual Leave'}));
+  // Flights: date BA number origin destination ... aircraft
+  [...text.matchAll(/(\d{4}-\d{2}-\d{2})\s+(BA\s*\d+)\s+([A-Z]{3})\s+([A-Z]{3})\s+\d+\s+([A-Z0-9]{3})/g)].forEach(m=>{
+    add(days,m[1],{type:'flight',text:`${m[3]} → ${m[4]}\n${m[2].replace(/\s+/,' ')} · ${m[5]}`});
+  });
+  // Duty/trip codes such as C4271 2026-07-09 CABINCREW
+  [...text.matchAll(/(C\d{4})\s+(\d{4}-\d{2}-\d{2})\s+CABINCREW/g)].forEach(m=>add(days,m[2],{type:'flight',text:`${m[1]}\nCABIN CREW`}));
+  // Notes
+  [...text.matchAll(/([A-Z]{3}) Uniform must be worn[^\d]+(\d{4}-\d{2}-\d{2})T/g)].forEach(m=>add(days,m[2],{type:'note',text:`${m[1]} note\nUniform required`}));
+  // Remove duplicate identical items per day
+  Object.keys(days).forEach(d=>{ const seen=new Set(); days[d]=days[d].filter(i=>{const k=i.type+i.text; if(seen.has(k))return false; seen.add(k); return true;}); });
+  return days;
+}
+function monthsFromDays(days){
+  const set=new Set(Object.keys(days).map(d=>d.slice(0,7))); return [...set].sort();
+}
+function generate(){
+  parsedDays=parseRoster(document.getElementById('raw').value); const months=monthsFromDays(parsedDays); const sel=document.getElementById('monthSelect');
+  sel.innerHTML=''; months.forEach(m=>{let o=document.createElement('option'); o.value=m; o.textContent=monthNames[Number(m.slice(5,7))-1]+' '+m.slice(0,4); sel.appendChild(o);});
+  const preferred=months.find(m=>m.endsWith('-07'))||months[0]; if(preferred) sel.value=preferred; renderCalendar(sel.value);
+}
+document.getElementById('monthSelect').addEventListener('change',e=>renderCalendar(e.target.value));
+function renderCalendar(ym){
+  const cal=document.getElementById('calendar'); cal.innerHTML=''; if(!ym){document.getElementById('title').textContent='Calendar'; return;}
+  const [y,m]=ym.split('-').map(Number); document.getElementById('title').textContent=monthNames[m-1]+' '+y;
+  dayNames.forEach(d=>{const el=document.createElement('div'); el.className='dow'; el.textContent=d; cal.appendChild(el);});
+  const first=new Date(y,m-1,1); const startOffset=(first.getDay()+6)%7; const start=new Date(y,m-1,1-startOffset);
+  for(let i=0;i<42;i++){
+    const dt=new Date(start); dt.setDate(start.getDate()+i); const key=dt.toISOString().slice(0,10); const cell=document.createElement('div'); cell.className='day'+(dt.getMonth()!==m-1?' other':'');
+    const num=document.createElement('div'); num.className='date'; num.textContent=dt.getDate(); cell.appendChild(num);
+    (parsedDays[key]||[]).forEach(item=>{const p=document.createElement('div'); p.className='pill '+item.type; p.textContent=item.text; cell.appendChild(p);});
+    cal.appendChild(cell);
+  }
+}
+</script>
+</body>
+</html>
